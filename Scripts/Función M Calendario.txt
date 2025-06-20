@@ -1,0 +1,304 @@
+let
+  fnTablaFecha = (FechaInicio as date, FechaFin as date, optional MesInicioAñoFiscal as number, optional Feriados as list, optional DiaInicioSemana as number, optional AgregarDíasLaboralesRelativos as logical) as table =>
+    let
+      MesInicioFiscal = List.Select({1 .. 12}, each _ = MesInicioAñoFiscal){0}? ?? 1,
+      DiaInicio = List.Select({0 .. 1}, each _ = DiaInicioSemana){0}? ?? 0,
+      FechaActual = Date.From(DateTime.FixedLocalNow()),
+      CantidadDias = Duration.Days(Duration.From(FechaFin - FechaInicio)) + 1,
+      InicioSemana = Day.Monday,
+      Fuente = List.Dates(FechaInicio, CantidadDias, #duration(1, 0, 0, 0)),
+      AgregarHoy = if List.Contains(Fuente, FechaActual) then Fuente else List.Combine({Fuente, {FechaActual}}),
+      ATabla = Table.FromList(AgregarHoy, Splitter.SplitByNothing(), type table [Date = Date.Type]),
+      InsertarAño = Table.AddColumn(ATabla, "Año", each Date.Year([Date]), type number),
+      InsertarDesfaseAñoActual = Table.AddColumn(InsertarAño, "Desfase Año Actual", each Date.Year([Date]) - Date.Year(Date.From(FechaActual)), type number),
+      InsertarAñoCompletado = Table.AddColumn(InsertarDesfaseAñoActual, "Año Completado", each Date.EndOfYear([Date]) < Date.From(Date.EndOfYear(FechaActual)), type logical),
+      InsertarNumeroTrimestre = Table.AddColumn(InsertarAñoCompletado, "Número Trimestre", each Date.QuarterOfYear([Date]), type number),
+      InsertarTrimestre = Table.AddColumn(InsertarNumeroTrimestre, "Trimestre", each "T" & Number.ToText([Número Trimestre]), type text),
+      InsertarInicioTrimestre = Table.AddColumn(InsertarTrimestre, "Inicio Trimestre", each Date.StartOfQuarter([Date]), type date),
+      InsertarFinTrimestre = Table.AddColumn(InsertarInicioTrimestre, "Fin Trimestre", each Date.EndOfQuarter([Date]), type date),
+      InsertarTrimestreYAño = Table.AddColumn(InsertarFinTrimestre, "Trimestre y Año", each "T" & Number.ToText(Date.QuarterOfYear([Date])) & Date.ToText([Date], [Format = " yyyy"]), type text),
+      InsertarTrimestreyAñoNum = Table.AddColumn(InsertarTrimestreYAño, "Trimestre y Año Num", each [Año] * 10 + [Número Trimestre], type number),
+      InsertarDesfaseTrimestreActual = Table.AddColumn(InsertarTrimestreyAñoNum, "Desfase Trimestre Actual", each ((4 * Date.Year([Date])) + Date.QuarterOfYear([Date])) - ((4 * Date.Year(Date.From(FechaActual))) + Date.QuarterOfYear(Date.From(FechaActual))), type number),
+      InsertarTrimestreCompletado = Table.AddColumn(InsertarDesfaseTrimestreActual, "Trimestre Completado", each Date.EndOfQuarter([Date]) < Date.From(Date.EndOfQuarter(FechaActual)), type logical),
+      InsertarMes = Table.AddColumn(InsertarTrimestreCompletado, "Mes", each Date.Month([Date]), type number),
+      InsertarInicioMes = Table.AddColumn(InsertarMes, "Inicio Mes", each Date.StartOfMonth([Date]), type date),
+      InsertarFinMes = Table.AddColumn(InsertarInicioMes, "Fin Mes", each Date.EndOfMonth([Date]), type date),
+      InsertarMesYAño = Table.AddColumn(InsertarFinMes, "Mes y Año", each Text.Proper(Date.ToText([Date], [Format = "MMM yyyy"])), type text),
+      InsertarMesenAñoNum = Table.AddColumn(InsertarMesYAño, "Mes en Año Num", each [Año] * 100 + [Mes], type number),
+      InsertarDesfaseMesActual = Table.AddColumn(InsertarMesenAñoNum, "Desfase Mes Actual", each ((12 * Date.Year([Date])) + Date.Month([Date])) - ((12 * Date.Year(Date.From(FechaActual))) + Date.Month(Date.From(FechaActual))), type number),
+      InsertarMesCompletado = Table.AddColumn(InsertarDesfaseMesActual, "Mes Completado", each Date.EndOfMonth([Date]) < Date.From(Date.EndOfMonth(FechaActual)), type logical),
+      InsertarNombreMes = Table.AddColumn(InsertarMesCompletado, "Nombre Mes", each Text.Proper(Date.ToText([Date], "MMMM")), type text),
+      InsertarMesCorto = Table.AddColumn(InsertarNombreMes, "Mes Corto", each Text.Proper(Date.ToText([Date], "MMM")), type text),
+      InsertarInicialMes = Table.AddColumn(InsertarMesCorto, "Inicial Mes", each Text.Start([Nombre Mes], 1) & Text.Repeat(Character.FromNumber(8203), Date.Month([Date])), type text),
+      InsertarDiaDelMes = Table.AddColumn(InsertarInicialMes, "Día del Mes", each Date.Day([Date]), type number),
+      InsertarNumeroSemana = Table.AddColumn(
+        InsertarDiaDelMes,
+        "Número Semana",
+        each
+          if Number.RoundDown((Date.DayOfYear([Date]) - (Date.DayOfWeek([Date], InicioSemana) + 1) + 10) / 7) = 0 then
+            Number.RoundDown((Date.DayOfYear(#date(Date.Year([Date]) - 1, 12, 31)) - (Date.DayOfWeek(#date(Date.Year([Date]) - 1, 12, 31), InicioSemana) + 1) + 10) / 7)
+          else if (Number.RoundDown((Date.DayOfYear([Date]) - (Date.DayOfWeek([Date], InicioSemana) + 1) + 10) / 7) = 53 and (Date.DayOfWeek(#date(Date.Year([Date]), 12, 31), InicioSemana) + 1 < 4)) then
+            1
+          else
+            Number.RoundDown((Date.DayOfYear([Date]) - (Date.DayOfWeek([Date], InicioSemana) + 1) + 10) / 7),
+        type number
+      ),
+      InsertarInicioSemana = Table.AddColumn(InsertarNumeroSemana, "Inicio Semana", each Date.StartOfWeek([Date], InicioSemana), type date),
+      InsertarFinSemana = Table.AddColumn(InsertarInicioSemana, "Fin Semana", each Date.EndOfWeek([Date], InicioSemana), type date),
+      InsertarSemanaYAño = Table.AddColumn(InsertarFinSemana, "Semana y Año", each "S" & Text.PadStart(Text.From([Número Semana]), 2, "0") & " " & Text.From(Date.Year(Date.AddDays(Date.StartOfWeek([Date], InicioSemana), 3))), type text),
+      InsertarSemanaenAñoNum = Table.AddColumn(InsertarSemanaYAño, "Semana en Año Num", each Date.Year(Date.AddDays(Date.StartOfWeek([Date], InicioSemana), 3)) * 100 + [Número Semana], Int64.Type),
+      InsertarDesfaseSemanaActual = Table.AddColumn(InsertarSemanaenAñoNum, "Desfase Semana Actual", each (Number.From(Date.StartOfWeek([Date], InicioSemana)) - Number.From(Date.StartOfWeek(FechaActual, InicioSemana))) / 7, type number),
+      InsertarSemanaCompletada = Table.AddColumn(InsertarDesfaseSemanaActual, "Semana Completada", each Date.EndOfWeek([Date], InicioSemana) < Date.From(Date.EndOfWeek(FechaActual, InicioSemana)), type logical),
+      InsertarNumeroDiaDeLaSemana = Table.AddColumn(InsertarSemanaCompletada, "Número Día de la Semana", each Date.DayOfWeek([Date], InicioSemana) + DiaInicio, Int64.Type),
+      InsertarNombreDiaDeLaSemana = Table.AddColumn(InsertarNumeroDiaDeLaSemana, "Nombre Día de la Semana", each Text.Proper(Date.ToText([Date], "dddd")), type text),
+      InsertarInicialDiaDeLaSemana = Table.AddColumn(
+        InsertarNombreDiaDeLaSemana,
+        "Inicial Día de la Semana",
+        each if Date.DayOfWeek([Date], InicioSemana) = 2 then "X" else Text.Proper(Text.Start([Nombre Día de la Semana], 1)) & Text.Repeat(Character.FromNumber(8203), Date.DayOfWeek([Date], InicioSemana) + DiaInicio),
+        type text
+      ),
+      InsertarDiaDelAño = Table.AddColumn(InsertarInicialDiaDeLaSemana, "Día del Año", each Date.DayOfYear([Date]), Int64.Type),
+      InsertarFechaInt = Table.AddColumn(InsertarDiaDelAño, "Fecha Int", each [Año] * 10000 + [Mes] * 100 + [Día del Mes], type number),
+      InsertarDesfaseDiaActual = Table.AddColumn(InsertarFechaInt, "Desfase Día Actual", each Number.From([Date]) - Number.From(FechaActual), type number),
+      InsertarEsPosteriorAHoy = Table.AddColumn(InsertarDesfaseDiaActual, "Es Posterior a Hoy", each not ([Date] <= Date.From(FechaActual)), type logical),
+      InsertarEsDiaLaboral = Table.AddColumn(InsertarEsPosteriorAHoy, "Es Día Laboral", each if Date.DayOfWeek([Date], InicioSemana) > 4 then false else true, type logical),
+      InsertarEsFestivo = Table.AddColumn(InsertarEsDiaLaboral, "Es Festivo", each if Feriados = null then "Desconocido" else List.Contains(Feriados, [Date]), if Feriados = null then type text else type logical),
+      InsertarEsDiaHabil = Table.AddColumn(InsertarEsFestivo, "Es Día Hábil", each if [Es Día Laboral] = true and [Es Festivo] <> true then true else false, type logical),
+      InsertarTipoDia = Table.AddColumn(InsertarEsDiaHabil, "Tipo Día", each if [Es Festivo] = true then "Festivo" else if [Es Día Laboral] = false then "Fin de Semana" else if [Es Día Laboral] = true then "Laboral" else null, type text),
+      InsertarAñoISO = Table.AddColumn(InsertarTipoDia, "Año ISO", each Date.Year(Date.AddDays(Date.StartOfWeek([Date], InicioSemana), 3)), type number),
+      InsertarNumeroTrimestreISO = Table.AddColumn(InsertarAñoISO, "Número Trimestre ISO", each if [Número Semana] > 39 then 4 else if [Número Semana] > 26 then 3 else if [Número Semana] > 13 then 2 else 1, Int64.Type),
+      InsertarTrimestreISO = Table.AddColumn(InsertarNumeroTrimestreISO, "Trimestre ISO", each "T" & Number.ToText([Número Trimestre ISO]), type text),
+      InsertarTrimestreISOYAño = Table.AddColumn(InsertarTrimestreISO, "Trimestre ISO y Año", each "T" & Number.ToText([Número Trimestre ISO]) & " " & Number.ToText([Año ISO]), type text),
+      InsertarTrimestreyAñoISO = Table.AddColumn(InsertarTrimestreISOYAño, "Trimestre y Año ISO", each [Año ISO] * 10 + [Número Trimestre ISO], type number),
+      // BufferTable = Table.Buffer(Table.Distinct( InsertarTrimestreyAñoISO[[ISO Year], [DateInt]])),
+      // InsertarISODia = Table.AddColumn(InsertarTrimestreyAñoISO, "ISO Day of Year", (OT) => Table.RowCount( Table.SelectRows( BufferTable, (IT) => IT[DateInt] <= OT[DateInt] and IT[ISO Year] = OT[ISO Year])),  Int64.Type),
+      AgregarAF = Table.AddColumn(InsertarTrimestreyAñoISO, "Año Fiscal", each "AF" & (if [Mes] >= MesInicioFiscal and MesInicioFiscal > 1 then Text.From([Año] + 1) else Text.From([Año])), type text),
+      //AgregarAñosFiscales = Table.AddColumn(AgregarAF, "Año Fiscal corto", each "AF" & (if [Mes] >= MesInicioFiscal and MesInicioFiscal >1 then Text.PadEnd( Text.End( Text.From([Año] +1), 2), 2, "0") else Text.End( Text.From([Año]), 2)), type text),
+      AgregarTF = Table.AddColumn(AgregarAF, "Trimestre Fiscal", each "TF" & Text.From(Number.RoundUp(Date.Month(Date.AddMonths([Date], - (MesInicioFiscal - 1))) / 3)) & " " & (if [Mes] >= MesInicioFiscal and MesInicioFiscal > 1 then Text.From([Año] + 1) else Text.From([Año])), type text),
+      AgregarTrimestreFiscalYAño = Table.AddColumn(AgregarTF, "Trimestre Fiscal y Año", each (if [Mes] >= MesInicioFiscal and MesInicioFiscal > 1 then [Año] + 1 else [Año]) * 10 + Number.RoundUp(Date.Month(Date.AddMonths([Date], - (MesInicioFiscal - 1))) / 3), type number),
+      AgregarNumeroPeriodoFiscal = Table.AddColumn(
+        AgregarTrimestreFiscalYAño,
+        "Número Período Fiscal",
+        each if [Mes] >= MesInicioFiscal and MesInicioFiscal > 1 then [Mes] - (MesInicioFiscal - 1) else if [Mes] >= MesInicioFiscal and MesInicioFiscal = 1 then [Mes] else [Mes] + (12 - MesInicioFiscal + 1),
+        type number
+      ),
+      AgregarPF = Table.AddColumn(AgregarNumeroPeriodoFiscal, "Período Fiscal", each "PF" & Text.PadStart(Text.From([Número Período Fiscal]), 2, "0") & " " & (if [Mes] >= MesInicioFiscal and MesInicioFiscal > 1 then Text.From([Año] + 1) else Text.From([Año])), type text),
+      AgregarPeriodofiscalyAño = Table.AddColumn(AgregarPF, "Período Fiscal y Año", each (if [Mes] >= MesInicioFiscal and MesInicioFiscal > 1 then [Año] + 1 else [Año]) * 100 + [Número Período Fiscal], type number),
+      InicioCalendarioFiscal = #date(Date.Year(FechaInicio) - 1, MesInicioFiscal, 1),
+      InsertarPrimerDíaFiscal = Table.AddColumn(AgregarPeriodofiscalyAño, "Primer Día Fiscal", each if [Mes] >= MesInicioFiscal and MesInicioFiscal > 1 then #date(Date.Year([Date]) + 1, MesInicioFiscal, 1) else #date(Date.Year([Date]), MesInicioFiscal, 1), type date),
+      TablaInicial = Table.FromList(List.Transform({Number.From(InicioCalendarioFiscal) .. Number.From(FechaFin)}, Date.From), Splitter.SplitByNothing(), type table [DateFW = Date.Type]),
+      AgregarPrimerDíaFiscal = Table.AddColumn(TablaInicial, "Primer Día Fiscal", each if Date.Month([DateFW]) < MesInicioFiscal then #date(Date.Year([DateFW]), MesInicioFiscal, 1) else #date(Date.Year([DateFW]) + 1, MesInicioFiscal, 1)),
+      AgregarInicioSemanaFiscal = Table.AddColumn(AgregarPrimerDíaFiscal, "Inicio Semana Fiscal", each Date.AddYears(Date.StartOfWeek([DateFW], InicioSemana), 1)),
+      Grupo1 = Table.Group(AgregarInicioSemanaFiscal, {"Primer Día Fiscal", "Inicio Semana Fiscal"}, {{"AllRows", each _, type table [DateFW = nullable date, Primer Día Fiscal = date, Inicio Semana Fiscal = date]}}),
+      Grupo2 = Table.Group(Grupo1, {"Primer Día Fiscal"}, {{"AllRows2", each _, type table [Primer Día Fiscal = date, Inicio Semana Fiscal = date, AllRows = table]}}),
+      AgregarÍndice = Table.AddColumn(Grupo2, "Custom", each Table.AddIndexColumn([AllRows2], "Número Semana Fiscal", 1, 1))[[Custom]],
+      ExpandirG2 = Table.ExpandTableColumn(AgregarÍndice, "Custom", {"Primer Día Fiscal", "Inicio Semana Fiscal", "AllRows", "Número Semana Fiscal"}, {"Primer Día Fiscal", "Inicio Semana Fiscal", "AllRows", "Número Semana Fiscal"}),
+      ExpandirG1 = Table.ExpandTableColumn(ExpandirG2, "AllRows", {"DateFW"}, {"DateFW"})[[DateFW], [Número Semana Fiscal]],
+      UnirSemanaFiscal = Table.Join(InsertarPrimerDíaFiscal, {"Date"}, ExpandirG1, {"DateFW"}, JoinKind.LeftOuter, JoinAlgorithm.SortMerge),
+      FWlogic = List.Contains({null}, MesInicioAñoFiscal),
+      ActualizarSemanaFiscal = if FWlogic then Table.ReplaceValue(UnirSemanaFiscal, each [Número Semana Fiscal], each if MesInicioFiscal = 1 then [Número Semana] else [Número Semana Fiscal], Replacer.ReplaceValue, {"Número Semana Fiscal"}) else UnirSemanaFiscal,
+      AgregarSemanaFiscal = Table.AddColumn(
+        ActualizarSemanaFiscal,
+        "Semana Fiscal",
+        each
+          if FWlogic then
+            "F" & [#"Semana y Año"]
+          else if MesInicioFiscal = 1 then
+            "SF" & Text.PadStart(Text.From([Número Semana Fiscal]), 2, "0") & Date.ToText([Date], " yyyy")
+          else if Date.Month([Date]) < MesInicioFiscal then
+            "SF" & Text.PadStart(Text.From([Número Semana Fiscal]), 2, "0") & Date.ToText([Date], " yyyy")
+          else
+            "SF" & Text.PadStart(Text.From([Número Semana Fiscal]), 2, "0") & " " & Text.From(Date.Year([Date]) + 1),
+        type text
+      ),
+      InsertarSemanaenAñoFiscal = Table.AddColumn(
+        AgregarSemanaFiscal,
+        "Semana en Año Fiscal",
+        each if FWlogic then [Semana en Año Num] else (if MesInicioFiscal = 1 then Date.Year([Date]) else if Date.Month([Date]) < MesInicioFiscal then Date.Year([Date]) else Date.Year([Date]) + 1) * 100 + [Número Semana Fiscal],
+        Int64.Type
+      ),
+      RegistroFechaActual = Table.SelectRows(InsertarSemanaenAñoFiscal, each ([Date] = FechaActual)),
+      AñoISOActual = RegistroFechaActual{0}[Año ISO],
+      TrimestreISOActual = RegistroFechaActual{0}[Número Trimestre ISO],
+      AñoActual = RegistroFechaActual{0}[Año],
+      MesActual = RegistroFechaActual{0}[Mes],
+      PrimerDíaFiscalActual = RegistroFechaActual{0}[Primer Día Fiscal],
+      PrimerDíaFiscalPrevio = Date.AddYears(PrimerDíaFiscalActual, - 1),
+      AñoFiscalActual = RegistroFechaActual{0}[Año Fiscal],
+      TrimestreFiscalActual = RegistroFechaActual{0}[Trimestre Fiscal y Año],
+      PeriodoFiscalActual = RegistroFechaActual{0}[Período Fiscal y Año],
+      SemanaFiscalActual = RegistroFechaActual{0}[Semana en Año Fiscal],
+      InsertarDesfaseAñoISOActual = Table.AddColumn(InsertarSemanaenAñoFiscal, "Desfase Año ISO Actual", each [Año ISO] - AñoISOActual, type number),
+      InsertarDesfaseTrimestreISOActual = Table.AddColumn(InsertarDesfaseAñoISOActual, "Desfase Trimestre ISO Actual", each ((4 * [Año ISO]) + [Número Trimestre ISO]) - ((4 * AñoISOActual) + TrimestreISOActual), type number),
+      InsertarDesfaseAñoFiscalActual = Table.AddColumn(InsertarDesfaseTrimestreISOActual, "Desfase Año Fiscal Actual", each try (if [Mes] >= MesInicioFiscal then [Año] + 1 else [Año]) - (if MesActual >= MesInicioFiscal then AñoActual + 1 else AñoActual) otherwise null, type number),
+      InsertarEsAñoFiscalActual = Table.AddColumn(InsertarDesfaseAñoFiscalActual, "Es Año Fiscal Actual", each if [Año Fiscal] = AñoFiscalActual then true else false, type logical),
+      InsertarEsTrimestreFiscalActual = Table.AddColumn(InsertarEsAñoFiscalActual, "Es Trimestre Fiscal Actual", each if [Trimestre Fiscal y Año] = TrimestreFiscalActual then true else false, type logical),
+      InsertarEsPeriodoFiscalActual = Table.AddColumn(InsertarEsTrimestreFiscalActual, "Es Período Fiscal Actual", each if [Período Fiscal y Año] = PeriodoFiscalActual then true else false, type logical),
+      InsertarEsSemanaFiscalActual = Table.AddColumn(InsertarEsPeriodoFiscalActual, "Es Semana Fiscal Actual", each if [Semana en Año Fiscal] = SemanaFiscalActual then true else false, type logical),
+      InsertarEsAñoAnteriorHastaHoy = Table.AddColumn(InsertarEsSemanaFiscalActual, "Es Año Anterior Hasta Hoy", each if AñoActual - 1 = [Año] and [Día del Año] <= RegistroFechaActual{0}[Día del Año] then true else false, type logical),
+      ListaFechasPrevioAF = List.Buffer(
+        Table.SelectRows(
+          Table.ExpandTableColumn(
+            Table.NestedJoin(
+              Table.AddIndexColumn(
+                Table.RenameColumns(Table.TransformColumnTypes(Table.FromList(List.Dates(PrimerDíaFiscalPrevio, Number.From(PrimerDíaFiscalActual - PrimerDíaFiscalPrevio), #duration(1, 0, 0, 0)), Splitter.SplitByNothing()), {{"Column1", type date}}), {{"Column1", "DateFY"}}),
+                "Index",
+                1,
+                1
+              ),
+              {"Index"},
+              Table.AddIndexColumn(
+                Table.RenameColumns(
+                  Table.TransformColumnTypes(Table.FromList(List.Dates(Date.AddYears(PrimerDíaFiscalPrevio, - 1), Number.From(PrimerDíaFiscalPrevio - Date.AddYears(PrimerDíaFiscalPrevio, - 1)), #duration(1, 0, 0, 0)), Splitter.SplitByNothing()), {{"Column1", type date}}),
+                  {{"Column1", "DateFY"}}
+                ),
+                "Index",
+                1,
+                1
+              ),
+              {"Index"},
+              "Table",
+              JoinKind.LeftOuter
+            ),
+            "Table",
+            {"DateFY"},
+            {"PrevDateFY"}
+          ),
+          each [DateFY] <= FechaActual
+        )[PrevDateFY]
+      ),
+      InsertarEsAñoFiscalAnteriorHastaHoy = Table.AddColumn(InsertarEsAñoAnteriorHastaHoy, "Es Año Fiscal Anterior Hasta Hoy", each if [Desfase Año Fiscal Actual] = - 1 and List.Contains(ListaFechasPrevioAF, [Date]) then true else false, type logical),
+      InsertarDiasLaboralesRelativos = if AgregarDíasLaboralesRelativos = true then Table.AddColumn(InsertarEsAñoFiscalAnteriorHastaHoy, "Días Laborales Relativos", each fxDIASLABORALES(FechaInicio, [Date], Feriados), type number) else InsertarEsAñoFiscalAnteriorHastaHoy,
+      fxDIASLABORALES = (FechaInicio, FechaFin, optional Feriados as list) =>
+        let
+          ListaDeFechas         = List.Dates(FechaInicio, Number.From(FechaFin - FechaInicio) + 1, Duration.From(1)),
+          EliminarFeriados      = if Feriados = null then ListaDeFechas else List.Difference(ListaDeFechas, List.Transform(Feriados, Date.From)),
+          EliminarFinesDeSemana = List.Select(EliminarFeriados, each Date.DayOfWeek(_, InicioSemana) < 5),
+          ContarDias            = List.Count(EliminarFinesDeSemana)
+        in
+          ContarDias,
+      EliminarHoy = Table.RemoveColumns(if FechaFin < FechaActual then Table.SelectRows(InsertarDiasLaboralesRelativos, each ([Date] <> FechaActual)) else InsertarDiasLaboralesRelativos, {"Día del Año", "Primer Día Fiscal"}),
+      CambiarTipo = Table.TransformColumnTypes(
+        EliminarHoy,
+        {
+          {"Año", Int64.Type},
+          {"Número Trimestre", Int64.Type},
+          {"Mes", Int64.Type},
+          {"Día del Mes", Int64.Type},
+          {"Fecha Int", Int64.Type},
+          {"Número Día de la Semana", Int64.Type},
+          {"Desfase Año ISO Actual", Int64.Type},
+          {"Trimestre y Año ISO", Int64.Type},
+          {"Desfase Trimestre ISO Actual", Int64.Type},
+          {"Número Semana", Int64.Type},
+          {"Semana en Año Num", Int64.Type},
+          {"Mes en Año Num", Int64.Type},
+          {"Trimestre y Año Num", Int64.Type},
+          {"Trimestre Fiscal y Año", Int64.Type},
+          {"Número Período Fiscal", Int64.Type},
+          {"Período Fiscal y Año", Int64.Type},
+          {"Desfase Semana Actual", Int64.Type},
+          {"Desfase Mes Actual", Int64.Type},
+          {"Desfase Trimestre Actual", Int64.Type},
+          {"Desfase Año Actual", Int64.Type},
+          {"Desfase Año Fiscal Actual", Int64.Type},
+          {"Número Semana Fiscal", Int64.Type}
+        }
+      ),
+      ReordenarColumnas = Table.ReorderColumns(
+        CambiarTipo,
+        {
+          "Date",
+          "Año",
+          "Desfase Año Actual",
+          "Año Completado",
+          "Número Trimestre",
+          "Trimestre",
+          "Inicio Trimestre",
+          "Fin Trimestre",
+          "Trimestre y Año",
+          "Trimestre y Año Num",
+          "Desfase Trimestre Actual",
+          "Trimestre Completado",
+          "Mes",
+          "Inicio Mes",
+          "Fin Mes",
+          "Mes y Año",
+          "Mes en Año Num",
+          "Desfase Mes Actual",
+          "Mes Completado",
+          "Nombre Mes",
+          "Mes Corto",
+          "Inicial Mes",
+          "Día del Mes",
+          "Número Semana",
+          "Inicio Semana",
+          "Fin Semana",
+          "Semana y Año",
+          "Semana en Año Num",
+          "Desfase Semana Actual",
+          "Semana Completada",
+          "Número Día de la Semana",
+          "Nombre Día de la Semana",
+          "Inicial Día de la Semana",
+          "Fecha Int",
+          "Desfase Día Actual",
+          "Es Posterior a Hoy",
+          "Es Día Laboral",
+          "Es Festivo",
+          "Es Día Hábil",
+          "Tipo Día",
+          "Año ISO",
+          "Desfase Año ISO Actual",
+          "Número Trimestre ISO",
+          "Trimestre ISO",
+          "Trimestre ISO y Año",
+          "Trimestre y Año ISO",
+          "Desfase Trimestre ISO Actual",
+          "Año Fiscal",
+          "Desfase Año Fiscal Actual",
+          "Trimestre Fiscal",
+          "Trimestre Fiscal y Año",
+          "Número Período Fiscal",
+          "Período Fiscal",
+          "Período Fiscal y Año",
+          "DateFW",
+          "Número Semana Fiscal",
+          "Semana Fiscal",
+          "Semana en Año Fiscal",
+          "Es Año Fiscal Actual",
+          "Es Trimestre Fiscal Actual",
+          "Es Período Fiscal Actual",
+          "Es Semana Fiscal Actual",
+          "Es Año Anterior Hasta Hoy",
+          "Es Año Fiscal Anterior Hasta Hoy"
+        }
+      ),
+      ListaColumnas =
+        if FWlogic then
+          Table.RemoveColumns(
+            ReordenarColumnas,
+            {
+              "Número Trimestre ISO",
+              "Año Fiscal",
+              "Trimestre Fiscal",
+              "Trimestre Fiscal y Año",
+              "Número Período Fiscal",
+              "Período Fiscal",
+              "Período Fiscal y Año",
+              "DateFW",
+              "Número Semana Fiscal",
+              "Semana Fiscal",
+              "Semana en Año Fiscal",
+              "Desfase Año Fiscal Actual",
+              "Es Trimestre Fiscal Actual",
+              "Es Período Fiscal Actual",
+              "Es Semana Fiscal Actual"
+            }
+          )
+        else
+          Table.RemoveColumns(ReordenarColumnas, {"Número Período Fiscal", "DateFW", "Número Semana Fiscal", "Número Trimestre ISO"})
+    in
+      ListaColumnas
+in
+  fnTablaFecha
